@@ -1,0 +1,109 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyTorch
+*.pth
+*.pt
+*.bin
+*.safetensors
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Data files (large datasets)
+*.tsv
+*.csv
+*.json
+*.pkl
+*.pickle
+*.db
+
+# Model files and tokenizers
+*.model
+*.vocab
+*.txt
+merges.txt
+vocab.txt
+spiece.model
+
+# Model checkpoints and logs
+checkpoints/
+logs/
+runs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Large data directories
+autodl-tmp/data/
+autodl-tmp/gnn_dataset_1000/
+autodl-tmp/subgraphs/
+autodl-tmp/models/*/checkpoints/
+autodl-tmp/models/*/logs/
+autodl-tmp/models/tokenizer/
+autodl-tmp/.autodl/
+
+# Images and visualizations
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+
+# Backup files
+*.bak 
