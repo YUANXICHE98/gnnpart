@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-路线0：纯GNN - 推理脚本
-使用纯GNN模型进行知识图谱推理
+路线0：GNN+相似度推理 - 推理脚本
+使用GNN模型结合节点相似度分析和路径权重计算进行知识图谱推理
+包含：基础GNN架构 + 节点相似度计算 + 重要路径分析 + 解释生成
 """
 
 import os
@@ -22,7 +23,7 @@ from tqdm import tqdm
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-# 纯GNN模型定义
+# GNN+相似度推理模型定义
 class PureGNN(nn.Module):
     def __init__(self, node_dim, hidden_dim, num_layers=3, dropout=0.1):
         super(PureGNN, self).__init__()
@@ -333,7 +334,7 @@ def visualize_graph(nodes, edges, node_labels, question_idx, answer_indices, nod
         plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=plt.cm.Oranges(0.8), markersize=10)
     ], ['问题节点', '答案节点', '相关节点'], loc='upper right')
     
-    plt.title("纯GNN推理结果可视化", fontsize=16)
+    plt.title("GNN+相似度推理结果可视化", fontsize=16)
     plt.axis('off')
     
     return plt.gcf()
@@ -514,7 +515,7 @@ def batch_inference(model, graph_dir, output_dir, device, visualize=False, batch
     return accuracy
 
 def main():
-    parser = argparse.ArgumentParser(description="路线0：纯GNN推理")
+    parser = argparse.ArgumentParser(description="路线0：GNN+相似度推理")
     parser.add_argument('--graph_dir', type=str, required=True, help='图数据目录')
     parser.add_argument('--model_path', type=str, default='', help='模型路径')
     parser.add_argument('--output_dir', type=str, default='outputs/route0_results', help='输出目录')

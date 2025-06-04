@@ -101,10 +101,16 @@ class GNNSoftMask(nn.Module):
             # 学习边掩码（每条边一个掩码值）
             edge_importances = self.edge_mask_generator(edge_feats).squeeze()
             
-            # 修改：使用更激进的温度增强机制
-            temp = self.mask_temperature * (1.0 + torch.sigmoid(self.training_steps / 1000.0))
-            # 修改：调整偏移量，提高掩码分化能力
-            edge_masks = torch.sigmoid((edge_importances - 0.3) * torch.exp(temp))
+            # 修改：使用更合理的温度和阈值设置
+            if self.training:
+                temp = torch.exp(self.mask_temperature)
+                offset = 0.3  # 训练时的偏移
+            else:
+                # 推理时使用更平衡的参数
+                temp = 2.0  # 降低温度，减少过度稀疏化
+                offset = 0.4  # 降低阈值，允许更多边保持重要性
+            
+            edge_masks = torch.sigmoid((edge_importances - offset) * temp)
         else:
             # 如果没有边，创建空掩码
             edge_masks = torch.tensor([], device=node_features.device)
@@ -141,10 +147,16 @@ class GNNSoftMask(nn.Module):
                 # 学习边掩码（每条边一个掩码值）
                 edge_importances = self.edge_mask_generator(edge_feats).squeeze()
                 
-                # 修改：使用更激进的温度增强机制
-                temp = self.mask_temperature * (1.0 + torch.sigmoid(self.training_steps / 1000.0))
-                # 修改：调整偏移量，提高掩码分化能力
-                edge_masks = torch.sigmoid((edge_importances - 0.3) * torch.exp(temp))
+                # 修改：使用与forward一致的温度和阈值设置
+                if self.training:
+                    temp = torch.exp(self.mask_temperature)
+                    offset = 0.3  # 训练时的偏移
+                else:
+                    # 推理时使用更平衡的参数
+                    temp = 2.0  # 降低温度，减少过度稀疏化
+                    offset = 0.4  # 降低阈值，允许更多边保持重要性
+                
+                edge_masks = torch.sigmoid((edge_importances - offset) * temp)
         
         # 预测（以问题节点特征作为输入）
         question_idx = 0  # 假设第一个节点是问题节点
@@ -185,6 +197,13 @@ def inference_single_graph(model, graph_data, device, visualize=False, threshold
     edges = graph_data.get('edges', [])
     question = graph_data.get('question', '')
     
+    # 如果没有问题文本，从问题节点中提取
+    if not question:
+        for node in nodes:
+            if node.get('role', '') == 'question':
+                question = node.get('surface_text', '')
+                break
+    
     # 提取节点特征
     node_features = []
     node_labels = []
@@ -207,14 +226,20 @@ def inference_single_graph(model, graph_data, device, visualize=False, threshold
         
         node_features.append(feat)
         
-        # 提取节点标签
-        node_labels.append(node.get('value', f'Node_{i}'))
+        # 提取节点标签 - 优先使用surface_text
+        node_text = node.get('surface_text', node.get('value', f'Node_{i}'))
+        node_labels.append(node_text)
         
         # 记录节点角色
         role = node.get('role', '')
+        name = node.get('name', '')
         node_roles[i] = role
         
         if role == 'question':
+            # 优先选择name为"question_entity"的节点作为主问题节点
+            if question_idx == -1:  # 如果还没有找到问题节点
+                question_idx = i
+            elif node.get('name', '') == 'question_entity':  # 如果找到更合适的问题节点
             question_idx = i
         elif role == 'answer':
             answer_indices.append(i)
@@ -259,10 +284,6 @@ def inference_single_graph(model, graph_data, device, visualize=False, threshold
     with torch.no_grad():
         prediction, edge_mask, node_embeds = model(node_features, edge_index)
     
-    # 获取预测结果
-    prediction_score = torch.sigmoid(prediction).item()
-    predicted_label = prediction_score > 0.5
-    
     # 处理边掩码
     edge_importance = {}
     if edge_index.size(1) > 0:
@@ -291,8 +312,10 @@ def inference_single_graph(model, graph_data, device, visualize=False, threshold
             sim = np.dot(embed, question_embed) / (np.linalg.norm(embed) * np.linalg.norm(question_embed) + 1e-8)
             node_importance[i] = float(sim)
     
-    # 找出重要路径
+    # 初始化重要路径列表
     important_paths = []
+    
+    # 找出重要路径
     if question_idx != -1 and answer_indices:
         # 创建NetworkX图以找出路径
         G = nx.DiGraph()
@@ -301,18 +324,64 @@ def inference_single_graph(model, graph_data, device, visualize=False, threshold
         for i in range(len(nodes)):
             G.add_node(i)
         
-        # 添加边（权重为边掩码的互补）
+        # 计算边重要性的相对差异
+        edge_importances_values = list(edge_importance.values())
+        if edge_importances_values:
+            min_importance = min(edge_importances_values)
+            max_importance = max(edge_importances_values)
+            importance_range = max_importance - min_importance
+            
+            # 如果所有边重要性都很接近，使用不同的策略
+            if importance_range < 0.05:  # 重要性差异很小
+                # 策略：直接使用无权重图
+                G_unweighted = nx.DiGraph()
+                for i in range(len(nodes)):
+                    G_unweighted.add_node(i)
+                for (src, dst) in edge_importance.keys():
+                    G_unweighted.add_edge(src, dst)
+                G = G_unweighted  # 主要使用无权重图
+            else:
+                # 原始策略：权重为边掩码的互补
         for (src, dst), importance in edge_importance.items():
-            # 权重越小，路径越短/重要
             weight = 1.0 - importance
             G.add_edge(src, dst, weight=weight)
         
-        # 查找从问题到答案的最短路径
+        # 查找从问题到答案的路径
         for answer_idx in answer_indices:
+            paths_found = []
+            
             try:
-                path = nx.shortest_path(G, source=question_idx, target=answer_idx, weight='weight')
+                # 尝试最短路径（考虑权重）
+                if importance_range >= 0.05:
+                    path = nx.shortest_path(G, source=question_idx, target=answer_idx, weight='weight')
+                    paths_found.append(('weighted', path))
+            except Exception as e:
+                pass
                 
-                # 计算路径重要性
+            try:
+                # 尝试最短路径（不考虑权重）
+                path = nx.shortest_path(G, source=question_idx, target=answer_idx)
+                paths_found.append(('shortest', path))
+            except Exception as e:
+                pass
+                
+            # 如果还是没找到，检查图的连通性
+            if not paths_found:
+                if G.has_node(question_idx) and G.has_node(answer_idx):
+                    # 检查是否有出边和入边
+                    q_out = list(G.successors(question_idx))
+                    a_in = list(G.predecessors(answer_idx))
+                    
+                    # 尝试2跳路径
+                    for intermediate in q_out:
+                        if G.has_edge(intermediate, answer_idx):
+                            path = [question_idx, intermediate, answer_idx]
+                            paths_found.append(('two_hop', path))
+                            break
+                
+            # 计算每条路径的重要性并添加到结果
+            for path_type, path in paths_found:
+                if len(path) > 1:  # 确保路径有意义
                 path_importance = 0.0
                 path_edges = []
                 
@@ -325,20 +394,36 @@ def inference_single_graph(model, graph_data, device, visualize=False, threshold
                         path_edges.append((src, dst, edge_imp))
                 
                 # 添加到重要路径列表
+                    avg_importance = path_importance / len(path_edges) if path_edges else 0
                 important_paths.append({
                     'path': path,
-                    'importance': path_importance / len(path) if path else 0,
-                    'edges': path_edges
-                })
-            except nx.NetworkXNoPath:
-                # 使用fallback方案，例如忽略权重的最短路径
-                try:
-                    path = nx.shortest_path(G, source=question_idx, target=answer_idx)
-                except:
-                    path = []
+                        'importance': avg_importance,
+                        'edges': path_edges,
+                        'type': path_type
+                    })
     
     # 按重要性排序
     important_paths.sort(key=lambda x: x['importance'], reverse=True)
+    
+    # 获取预测结果
+    prediction_score = torch.sigmoid(prediction).item()
+    
+    # 改进的预测逻辑：结合路径信息
+    if important_paths:
+        # 如果找到了重要路径，基于路径质量调整预测
+        best_path_importance = important_paths[0]['importance']
+        
+        # 如果路径重要性高于阈值，或者找到了直接连接，认为预测为True
+        if best_path_importance > 0.3 or len(important_paths[0]['path']) == 2:  # 直接连接
+            predicted_label = True
+            # 调整置信度，结合原始分数和路径重要性
+            adjusted_score = max(prediction_score, 0.5 + best_path_importance * 0.5)
+            prediction_score = min(adjusted_score, 0.95)  # 限制最高值
+        else:
+            predicted_label = prediction_score > 0.5
+    else:
+        # 没有找到路径，使用原始判断
+        predicted_label = prediction_score > 0.5
     
     # 可视化
     if visualize:

@@ -164,12 +164,12 @@ def plot_sparsity_analysis(metrics, save_dir):
     
     # 1. 稀疏度vs F1分数关系
     if train_sparsity and val_f1:
-        axes[0, 0].scatter(train_sparsity, train_f1, alpha=0.7, c=epochs, cmap='viridis', s=50, label='训练')
-        axes[0, 0].scatter(val_sparsity, val_f1, alpha=0.7, c=epochs, cmap='plasma', s=50, label='验证')
-        axes[0, 0].axvspan(0.2, 0.3, alpha=0.2, color='green', label='目标稀疏度')
+        axes[0, 0].scatter(train_sparsity, train_f1, alpha=0.7, c=epochs, cmap='viridis', s=50, label='Training')
+        axes[0, 0].scatter(val_sparsity, val_f1, alpha=0.7, c=epochs, cmap='plasma', s=50, label='Validation')
+        axes[0, 0].axvspan(0.2, 0.3, alpha=0.2, color='green', label='Target Sparsity')
         axes[0, 0].set_xlabel('Sparsity Rate')
         axes[0, 0].set_ylabel('F1 Score')
-        axes[0, 0].set_title('稀疏度 vs F1分数关系')
+        axes[0, 0].set_title('Sparsity vs F1 Score')
         axes[0, 0].legend()
         axes[0, 0].grid(True, alpha=0.3)
     
@@ -186,20 +186,20 @@ def plot_sparsity_analysis(metrics, save_dir):
         axes[0, 1].axhline(y=0, color='black', linestyle='--', alpha=0.5)
         axes[0, 1].set_xlabel('Epoch')
         axes[0, 1].set_ylabel('Sparsity Change Rate')
-        axes[0, 1].set_title('稀疏度变化趋势')
+        axes[0, 1].set_title('Sparsity Change Trend')
         axes[0, 1].grid(True, alpha=0.3)
     
     # 3. 双轴图：稀疏度和F1分数
     ax1 = axes[1, 0]
     ax2 = ax1.twinx()
     
-    line1 = ax1.plot(epochs, val_sparsity, 'b-', linewidth=2, marker='o', label='验证稀疏度')
-    ax1.axhspan(0.2, 0.3, alpha=0.2, color='blue', label='目标范围')
+    line1 = ax1.plot(epochs, val_sparsity, 'b-', linewidth=2, marker='o', label='Sparsity Rate')
+    ax1.axhspan(0.2, 0.3, alpha=0.2, color='blue', label='Target Range')
     ax1.set_xlabel('Epoch')
     ax1.set_ylabel('Sparsity Rate', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
     
-    line2 = ax2.plot(epochs, val_f1, 'r-', linewidth=2, marker='x', label='验证F1')
+    line2 = ax2.plot(epochs, val_f1, 'r-', linewidth=2, marker='x', label='Validation F1')
     ax2.set_ylabel('F1 Score', color='red')
     ax2.tick_params(axis='y', labelcolor='red')
     
@@ -208,7 +208,7 @@ def plot_sparsity_analysis(metrics, save_dir):
     labels = [l.get_label() for l in lines]
     ax1.legend(lines, labels, loc='upper left')
     
-    axes[1, 0].set_title('稀疏度与F1分数双轴图')
+    axes[1, 0].set_title('Sparsity vs F1 Score')
     
     # 4. 稀疏度收敛分析
     if len(val_sparsity) >= 5:
@@ -224,10 +224,10 @@ def plot_sparsity_analysis(metrics, save_dir):
             convergence_std.append(std_val)
         
         axes[1, 1].plot(convergence_epochs, convergence_std, 'purple', linewidth=2, marker='s')
-        axes[1, 1].axhline(y=0.05, color='red', linestyle='--', alpha=0.7, label='收敛阈值')
+        axes[1, 1].axhline(y=0.05, color='red', linestyle='--', alpha=0.7, label='Convergence Threshold')
         axes[1, 1].set_xlabel('Epoch')
         axes[1, 1].set_ylabel('Sparsity Std (5-epoch window)')
-        axes[1, 1].set_title('稀疏度收敛分析')
+        axes[1, 1].set_title('Sparsity Convergence Analysis')
         axes[1, 1].legend()
         axes[1, 1].grid(True, alpha=0.3)
     
@@ -302,8 +302,8 @@ def generate_training_report(metrics, save_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Route1检查点可视化')
-    parser.add_argument('--checkpoint_dir', type=str, required=True, help='检查点目录')
-    parser.add_argument('--output_dir', type=str, default='./visualization_output', help='输出目录')
+    parser.add_argument('--checkpoint_dir', type=str, default='autodl-tmp/models/route1_gnn_softmask/checkpoints/checkpoints529', help='检查点目录')
+    parser.add_argument('--output_dir', type=str, default='autodl-tmp/models/route1_gnn_softmask/checkpoints/checkpoints529/visualization', help='输出目录')
     
     args = parser.parse_args()
     
