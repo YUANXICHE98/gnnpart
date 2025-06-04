@@ -107,3 +107,13 @@ autodl-tmp/.autodl/
 
 # Backup files
 *.bak 
+
+# Exception: Include route1_gnn_softmask checkpoints
+!autodl-tmp/models/route1_gnn_softmask/checkpoints/
+!autodl-tmp/models/route1_gnn_softmask/checkpoints/**/*.pt
+!autodl-tmp/models/route1_gnn_softmask/checkpoints/**/*.json
+
+# Exception: Include route0_att checkpoints  
+!autodl-tmp/models/route0_att/checkpoints0518/
+!autodl-tmp/models/route0_att/checkpoints0518/**/*.pt
+!autodl-tmp/models/route0_att/checkpoints0518/**/*.json 

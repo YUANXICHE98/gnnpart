@@ -240,7 +240,7 @@ def inference_single_graph(model, graph_data, device, visualize=False, threshold
             if question_idx == -1:  # 如果还没有找到问题节点
                 question_idx = i
             elif node.get('name', '') == 'question_entity':  # 如果找到更合适的问题节点
-            question_idx = i
+                question_idx = i
         elif role == 'answer':
             answer_indices.append(i)
     
@@ -342,9 +342,9 @@ def inference_single_graph(model, graph_data, device, visualize=False, threshold
                 G = G_unweighted  # 主要使用无权重图
             else:
                 # 原始策略：权重为边掩码的互补
-        for (src, dst), importance in edge_importance.items():
-            weight = 1.0 - importance
-            G.add_edge(src, dst, weight=weight)
+                for (src, dst), importance in edge_importance.items():
+                    weight = 1.0 - importance
+                    G.add_edge(src, dst, weight=weight)
         
         # 查找从问题到答案的路径
         for answer_idx in answer_indices:
@@ -382,21 +382,21 @@ def inference_single_graph(model, graph_data, device, visualize=False, threshold
             # 计算每条路径的重要性并添加到结果
             for path_type, path in paths_found:
                 if len(path) > 1:  # 确保路径有意义
-                path_importance = 0.0
-                path_edges = []
-                
-                for i in range(len(path) - 1):
-                    src, dst = path[i], path[i+1]
-                    edge_key = (src, dst)
-                    if edge_key in edge_importance:
-                        edge_imp = edge_importance[edge_key]
-                        path_importance += edge_imp
-                        path_edges.append((src, dst, edge_imp))
-                
-                # 添加到重要路径列表
+                    path_importance = 0.0
+                    path_edges = []
+                    
+                    for i in range(len(path) - 1):
+                        src, dst = path[i], path[i+1]
+                        edge_key = (src, dst)
+                        if edge_key in edge_importance:
+                            edge_imp = edge_importance[edge_key]
+                            path_importance += edge_imp
+                            path_edges.append((src, dst, edge_imp))
+                    
+                    # 添加到重要路径列表
                     avg_importance = path_importance / len(path_edges) if path_edges else 0
-                important_paths.append({
-                    'path': path,
+                    important_paths.append({
+                        'path': path,
                         'importance': avg_importance,
                         'edges': path_edges,
                         'type': path_type
