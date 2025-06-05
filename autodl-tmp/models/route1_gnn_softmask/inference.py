@@ -101,16 +101,17 @@ class GNNSoftMask(nn.Module):
             # 学习边掩码（每条边一个掩码值）
             edge_importances = self.edge_mask_generator(edge_feats).squeeze()
             
-            # 修改：使用更合理的温度和阈值设置
+            # 修改：使用更稳定的温度和阈值设置
             if self.training:
-                temp = torch.exp(self.mask_temperature)
-                offset = 0.3  # 训练时的偏移
+                temp = max(0.5, min(3.0, torch.exp(self.mask_temperature)))  # 限制温度范围
+                offset = 0.5  # 提高阈值，减少过度稀疏化
             else:
-                # 推理时使用更平衡的参数
-                temp = 2.0  # 降低温度，减少过度稀疏化
-                offset = 0.4  # 降低阈值，允许更多边保持重要性
+                # 推理时使用固定的稳定参数
+                temp = 1.0
+                offset = 0.5
             
-            edge_masks = torch.sigmoid((edge_importances - offset) * temp)
+            # 使用更稳定的激活函数
+            edge_masks = torch.sigmoid((edge_importances - offset) / temp)  # 除法而不是乘法
         else:
             # 如果没有边，创建空掩码
             edge_masks = torch.tensor([], device=node_features.device)
@@ -149,14 +150,10 @@ class GNNSoftMask(nn.Module):
                 
                 # 修改：使用与forward一致的温度和阈值设置
                 if self.training:
-                    temp = torch.exp(self.mask_temperature)
-                    offset = 0.3  # 训练时的偏移
-                else:
-                    # 推理时使用更平衡的参数
-                    temp = 2.0  # 降低温度，减少过度稀疏化
-                    offset = 0.4  # 降低阈值，允许更多边保持重要性
+                    temp = max(0.5, min(3.0, torch.exp(self.mask_temperature)))  # 限制温度范围
+                    offset = 0.5  # 提高阈值，减少过度稀疏化
                 
-                edge_masks = torch.sigmoid((edge_importances - offset) * temp)
+                edge_masks = torch.sigmoid((edge_importances - offset) / temp)
         
         # 预测（以问题节点特征作为输入）
         question_idx = 0  # 假设第一个节点是问题节点

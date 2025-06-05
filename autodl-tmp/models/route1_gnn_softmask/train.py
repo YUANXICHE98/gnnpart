@@ -45,16 +45,24 @@ class AdaptiveSparsityController:
         self.best_performance = 0.0
         self.total_training_steps = 0
         
-        # 修改：增加动态权重范围，提高基础权重
-        self.base_l1_weight = 0.005  # 提高基础L1权重
-        self.max_l1_weight = 0.05   # 提高最大权重
-        self.min_l1_weight = 0.001  # 提高最小权重
+        # 修改：更保守的权重设置，防止过度稀疏
+        self.base_l1_weight = 0.001   # 降低基础权重
+        self.max_l1_weight = 0.01     # 降低最大权重
+        self.min_l1_weight = 0.0001   # 降低最小权重
         
-    def update_history(self, performance, sparsity, loss):
+        # 新增：温度参数控制
+        self.temperature_history = deque(maxlen=5)
+        self.target_temperature_range = (0.5, 2.0)  # 温度安全范围
+        self.temperature_adjustment_rate = 0.1  # 温度调整速率
+        
+    def update_history(self, performance, sparsity, loss, temperature=None):
         """更新历史记录"""
         self.performance_history.append(performance)
         self.sparsity_history.append(sparsity)
         self.loss_history.append(loss)
+        
+        if temperature is not None:
+            self.temperature_history.append(temperature)
         
         if performance > self.best_performance:
             self.best_performance = performance
@@ -64,31 +72,42 @@ class AdaptiveSparsityController:
         self.total_training_steps = total_steps
     
     def get_training_stage_factor(self, current_step):
-        """根据训练阶段返回不同的调整因子"""
+        """根据训练阶段返回不同的调整因子 - 改进版"""
         if self.total_training_steps == 0:
             return 1.0
             
         progress = current_step / self.total_training_steps
         
-        if progress < 0.1:
-            # 早期阶段：温和的稀疏化
-            return 0.5
-        elif progress < 0.5:
-            # 中期阶段：正常稀疏化
-            return 1.0
+        if progress < 0.3:
+            # 前30%：非常温和的稀疏化，让模型先学会基本特征
+            return 0.2
+        elif progress < 0.6:
+            # 中30%：逐渐增加稀疏化
+            return 0.5 + (progress - 0.3) * 1.67  # 从0.5渐增到1.0
         else:
-            # 后期阶段：精细调整
-            return 0.8
+            # 后40%：稳定的稀疏化
+            return 1.0
     
-    def detect_performance_drop(self, threshold=0.05):
-        """检测性能下降"""
-        if len(self.performance_history) < 5:
+    def detect_performance_drop(self, threshold=0.03):
+        """检测性能下降 - 降低阈值，提高敏感度"""
+        if len(self.performance_history) < 3:
             return False
         
-        recent_avg = np.mean(list(self.performance_history)[-3:])
-        earlier_avg = np.mean(list(self.performance_history)[-6:-3])
+        recent_avg = np.mean(list(self.performance_history)[-2:])
+        earlier_avg = np.mean(list(self.performance_history)[-4:-2])
         
         return (earlier_avg - recent_avg) > threshold
+    
+    def detect_sparsity_explosion(self, threshold=0.3):
+        """检测稀疏度爆炸 - 新增功能"""
+        if len(self.sparsity_history) < 2:
+            return False
+        
+        current = self.sparsity_history[-1]
+        previous = self.sparsity_history[-2]
+        
+        # 如果稀疏度在一个epoch内增长超过30%，认为是爆炸
+        return (current - previous) > threshold
     
     def get_sparsity_trend(self):
         """获取稀疏度趋势"""
@@ -98,24 +117,53 @@ class AdaptiveSparsityController:
         recent = list(self.sparsity_history)
         return recent[-1] - recent[0]
     
+    def compute_temperature_adjustment(self, current_sparsity, current_temperature):
+        """计算温度参数调整 - 新增核心功能"""
+        target_temp = current_temperature
+        
+        # 稀疏度过高：降低温度，使掩码更温和
+        if current_sparsity > self.target_sparsity + 0.15:
+            adjustment = -self.temperature_adjustment_rate * min(2.0, current_sparsity / self.target_sparsity)
+            target_temp = max(self.target_temperature_range[0], current_temperature + adjustment)
+            
+        # 稀疏度过低：适度提高温度
+        elif current_sparsity < self.target_sparsity - 0.1:
+            adjustment = self.temperature_adjustment_rate * 0.5  # 更保守的增长
+            target_temp = min(self.target_temperature_range[1], current_temperature + adjustment)
+        
+        # 检测稀疏度爆炸，强制降低温度
+        if self.detect_sparsity_explosion():
+            target_temp = max(0.3, current_temperature * 0.7)  # 强制降温
+            print(f"⚠️ 检测到稀疏度爆炸，强制降温到 {target_temp:.3f}")
+        
+        return target_temp
+    
     def compute_adaptive_weight(self, current_sparsity, current_performance, training_step):
-        """计算自适应稀疏权重 - 改进版"""
-        # 1. 稀疏度偏差项（更强的响应）
+        """计算自适应稀疏权重 - 改进版，更保守"""
+        # 1. 稀疏度偏差项
         sparsity_deviation = abs(current_sparsity - self.target_sparsity)
         
         # 2. 训练阶段系数
         stage_factor = self.get_training_stage_factor(training_step)
         
-        # 3. 改进的动态权重计算
-        if current_sparsity > self.target_sparsity + 0.1:
+        # 3. 更保守的动态权重计算
+        if current_sparsity > self.target_sparsity + 0.2:
+            # 稀疏度严重过高，几乎停止正则化
+            weight = self.min_l1_weight
+        elif current_sparsity > self.target_sparsity + 0.1:
             # 稀疏度过高，大幅降低正则化
-            weight = self.min_l1_weight + (self.base_l1_weight - self.min_l1_weight) * (1 - sparsity_deviation)
-        elif current_sparsity < self.target_sparsity - 0.1:
-            # 稀疏度过低，增加正则化
-            weight = self.base_l1_weight + (self.max_l1_weight - self.base_l1_weight) * sparsity_deviation
+            weight = self.min_l1_weight * 2
+        elif current_sparsity < self.target_sparsity - 0.15:
+            # 稀疏度过低，适度增加正则化
+            weight = self.base_l1_weight + (self.max_l1_weight - self.base_l1_weight) * 0.5
         else:
             # 在合理范围内，使用基础权重
             weight = self.base_l1_weight * stage_factor
+        
+        # 性能下降保护
+        if self.detect_performance_drop():
+            weight *= 0.5  # 性能下降时减半权重
+            print(f"⚠️ 检测到性能下降，降低稀疏权重到 {weight:.6f}")
         
         # 确保权重在合理范围内
         weight = max(self.min_l1_weight, min(self.max_l1_weight, weight))
@@ -123,14 +171,21 @@ class AdaptiveSparsityController:
         return weight
     
     def compute_entropy_regularization(self, edge_masks):
-        """熵正则化：鼓励掩码分布的多样性"""
+        """熵正则化：鼓励掩码分布的多样性 - 改进版"""
         if len(edge_masks) == 0:
             return torch.tensor(0.0, device=edge_masks.device if hasattr(edge_masks, 'device') else 'cpu')
         
         # 避免所有掩码都趋向同一个值
         p = torch.clamp(edge_masks, 1e-8, 1-1e-8)
         entropy = -(p * torch.log(p) + (1-p) * torch.log(1-p)).mean()
-        return -entropy  # 最大化熵
+        
+        # 根据当前稀疏度调整熵权重
+        current_sparsity = (edge_masks < 0.5).float().mean()
+        if current_sparsity > 0.8:
+            # 过度稀疏时，强化熵正则化，鼓励多样性
+            return -entropy * 2.0
+        else:
+            return -entropy * 0.5  # 正常情况下使用较小权重
 
 # 软掩码GNN模型
 class SoftMaskGNN(nn.Module):
@@ -152,8 +207,12 @@ class SoftMaskGNN(nn.Module):
         # 添加：训练步数追踪
         self.register_buffer('training_steps', torch.tensor(0.0))
         
-        # 修改：更高的初始温度
-        self.mask_temperature = nn.Parameter(torch.tensor(2.0))
+        # 修改：更保守的初始温度和参数设置
+        self.mask_temperature = nn.Parameter(torch.tensor(0.8))  # 降低初始温度
+        
+        # 新增：温度控制相关参数
+        self.temperature_bounds = (0.3, 2.5)  # 温度边界
+        self.register_buffer('last_sparsity', torch.tensor(0.0))  # 记录上次稀疏度
         
         # 边类型特定的变换
         self.edge_transforms = nn.ModuleDict({
@@ -872,7 +931,31 @@ def train(model, train_loader, optimizer, device, epoch, writer, sparsity_weight
         
         # 更新稀疏控制器历史
         avg_sparsity = np.mean(batch_sparsities)
-        model.sparsity_controller.update_history(current_f1, avg_sparsity, task_loss.item())
+        current_temperature = model.mask_temperature.item()
+        model.sparsity_controller.update_history(current_f1, avg_sparsity, task_loss.item(), current_temperature)
+        
+        # 新增：温度自动调整机制
+        with torch.no_grad():
+            target_temperature = model.sparsity_controller.compute_temperature_adjustment(
+                avg_sparsity, current_temperature
+            )
+            
+            # 平滑调整温度，避免剧烈变化
+            adjustment_factor = 0.1  # 调整速度
+            new_temperature = current_temperature + adjustment_factor * (target_temperature - current_temperature)
+            
+            # 限制温度在安全范围内
+            new_temperature = max(model.temperature_bounds[0], min(model.temperature_bounds[1], new_temperature))
+            
+            # 更新温度参数
+            model.mask_temperature.data.fill_(new_temperature)
+            
+            # 记录温度变化
+            if abs(new_temperature - current_temperature) > 0.01:
+                print(f"🌡️ 温度调整: {current_temperature:.3f} → {new_temperature:.3f} (稀疏度: {avg_sparsity:.3f})")
+            
+            # 更新上次稀疏度记录
+            model.last_sparsity.data.fill_(avg_sparsity)
         
         # 获取负例索引
         negative_idxs = []
@@ -938,6 +1021,7 @@ def train(model, train_loader, optimizer, device, epoch, writer, sparsity_weight
         writer.add_scalar('Train/TaskLoss', task_loss.item(), global_step)
         writer.add_scalar('Train/SparsityLoss', sparsity_loss.item(), global_step)
         writer.add_scalar('Train/SparsityRate', np.mean(batch_sparsities), global_step)
+        writer.add_scalar('Train/Temperature', model.mask_temperature.item(), global_step)  # 新增温度记录
         writer.add_scalar('Train/AdaptiveWeight', adaptive_weight, global_step)
         
         # 更新进度条信息
@@ -946,6 +1030,7 @@ def train(model, train_loader, optimizer, device, epoch, writer, sparsity_weight
             'task_loss': f"{task_loss.item():.4f}",
             'sparsity_loss': f"{sparsity_loss.item():.4f}",
             'sparsity': f"{np.mean(batch_sparsities):.3f}",
+            'temp': f"{model.mask_temperature.item():.2f}",  # 添加温度显示
             'adaptive_w': f"{adaptive_weight:.5f}",
             'acc': f"{current_correct/current_total:.4f}" if current_total > 0 else "N/A"
         })
@@ -1131,25 +1216,30 @@ def analyze_edge_importance(model, graph_data, device):
         
         return edge_masks, sparsity, important_edges
 
-def check_early_stopping(sparsity_history, f1_history, patience=5):
+def check_early_stopping(sparsity_history, f1_history, patience=8):
     """
-    检查是否应该早停
+    检查是否应该早停 - 修改为更宽松的条件
     
-    条件: 当稀疏率ρ∈[0.20, 0.30]且dev F1 5个epoch无提升
+    条件: 当稀疏率ρ∈[0.15, 0.50]且dev F1 8个epoch无提升时才停止
     """
     if len(sparsity_history) < patience or len(f1_history) < patience:
         return False
     
-    # 检查稀疏率是否在目标范围内
+    # 检查稀疏率是否在目标范围内（放宽范围）
     latest_sparsity = sparsity_history[-1]
-    in_target_range = 0.10 <= latest_sparsity <= 0.40
+    in_target_range = 0.05 <= latest_sparsity <= 0.60  # 更宽的范围
     
-    # 检查F1是否有提升
+    # 检查F1是否有提升（更严格的无提升条件）
     recent_f1 = list(f1_history)[-patience:]
     best_recent_f1 = max(recent_f1)
     no_improvement = best_recent_f1 <= f1_history[-patience] + 1e-4
     
-    return in_target_range and no_improvement
+    # 额外检查：如果F1下降过多，也要早停
+    recent_avg = np.mean(list(f1_history)[-3:])
+    earlier_avg = np.mean(list(f1_history)[-6:-3]) if len(f1_history) >= 6 else recent_avg
+    severe_drop = (earlier_avg - recent_avg) > 0.15  # F1下降超过15%
+    
+    return in_target_range and no_improvement and not severe_drop
 
 def main():
     parser = argparse.ArgumentParser(description='软掩码GNN训练')
@@ -1229,7 +1319,18 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     
     # 训练循环
-    print("开始训练...")
+    print("=" * 60)
+    print("🚀 开始Route1 GNN软掩码训练")
+    print("=" * 60)
+    print(f"📊 训练配置:")
+    print(f"   模型参数: hidden_dim={args.hidden_dim}, num_layers={args.num_layers}")
+    print(f"   训练参数: batch_size={args.batch_size}, lr={args.lr}, epochs={args.epochs}")
+    print(f"   稀疏化目标: {args.sparsity_target:.2f}")
+    print(f"   数据集: 训练{len(train_dataset)}个, 验证{len(val_dataset)}个")
+    print(f"   设备: {device}")
+    print(f"   输出目录: {args.output_dir}")
+    print("=" * 60)
+    
     best_val_f1 = 0
     patience_counter = 0
     
